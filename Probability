@@ -1,0 +1,2433 @@
+# =============================================================================
+# 📘 PROBABILITY LEARNING SYSTEM (BEGINNER → LEVEL 6)
+# Level 1: Probability Basics (coin, dice, cards)
+# Level 2: Compound Events (union, intersection, conditional)
+# Level 3: Counting Methods (FCP, factorial, permutation, combination)
+# Level 4: Discrete Distributions (Random Variable, Binomial, Poisson)
+# Level 5: Continuous (Normal + Z-score basics)
+# Level 6: Normal Distribution Toolkit (ALL 7 add-ons)
+#   (1) Auto Z-score (x or a,b)
+#   (2) Percentile / Inverse Normal (qnorm)
+#   (3) Empirical Rule (68-95-99.7) visual
+#   (4) Spec limits / Quality Control mode
+#   (5) PDF vs CDF toggle
+#   (6) Step-by-step explanation
+#   (7) Compare two normals overlay
+#
+# No simulations. Beginner-friendly.
+# Developer: Dr. M.I.M. Riyath, South Eastern University of Sri Lanka
+# =============================================================================
+
+library(shiny)
+library(ggplot2)
+
+# ---------------- Helpers ----------------
+fmt_frac <- function(a, b) paste0(a, "/", b)
+fmt_pct  <- function(p, d = 2) paste0(round(100 * p, d), "%")
+
+metric_card <- function(label, value, sub = NULL) {
+  div(class = "metric-card",
+      div(class = "metric-label", label),
+      div(class = "metric-value", value),
+      if (!is.null(sub)) div(class = "metric-sub", sub)
+  )
+}
+
+prob_bar <- function(df, title = "") {
+  ggplot(df, aes(x = Outcome, y = Probability)) +
+    geom_col() +
+    scale_y_continuous(limits = c(0, 1)) +
+    labs(title = title, x = "", y = "Probability") +
+    theme_minimal(base_size = 13)
+}
+
+circle_df <- function(center = c(0,0), r = 1, n = 200, id = "A") {
+  t <- seq(0, 2*pi, length.out = n)
+  data.frame(
+    x = center[1] + r*cos(t),
+    y = center[2] + r*sin(t),
+    id = id
+  )
+}
+
+fact <- function(n) {
+  if (n < 0) return(NA_real_)
+  if (n == 0) return(1)
+  prod(1:n)
+}
+
+nPr <- function(n, r) {
+  if (r > n || r < 0) return(NA_real_)
+  fact(n) / fact(n - r)
+}
+
+nCr <- function(n, r) {
+  if (r > n || r < 0) return(NA_real_)
+  fact(n) / (fact(r) * fact(n - r))
+}
+
+# Binomial & Poisson
+dbinom_safe <- function(k, n, p) dbinom(k, size = n, prob = p)
+pbinom_le   <- function(k, n, p) pbinom(k, size = n, prob = p)
+pbinom_ge   <- function(k, n, p) 1 - pbinom(k - 1, size = n, prob = p)
+
+dpois_safe  <- function(k, lambda) dpois(k, lambda = lambda)
+ppois_le    <- function(k, lambda) ppois(k, lambda = lambda)
+ppois_ge    <- function(k, lambda) 1 - ppois(k - 1, lambda = lambda)
+
+# Normal PDF with shading
+normal_plot_with_shade <- function(mu, sigma, type, x = NULL, a = NULL, b = NULL,
+                                   title = "Normal distribution (area = probability)") {
+  sigma <- max(1e-9, sigma)
+  xmin <- mu - 4*sigma
+  xmax <- mu + 4*sigma
+  grid <- seq(xmin, xmax, length.out = 800)
+  y <- dnorm(grid, mean = mu, sd = sigma)
+  df <- data.frame(x = grid, y = y)
+
+  shade_df <- NULL
+  vlines <- data.frame(x = numeric(0), lab = character(0))
+
+  if (type == "lt") {
+    x0 <- x
+    grid_s <- grid[grid <= x0]
+    shade_df <- data.frame(
+      x = c(grid_s, rev(grid_s)),
+      y = c(dnorm(grid_s, mu, sigma), rep(0, length(grid_s)))
+    )
+    vlines <- data.frame(x = c(mu, x0), lab = c("μ", "x"))
+  } else if (type == "gt") {
+    x0 <- x
+    grid_s <- grid[grid >= x0]
+    shade_df <- data.frame(
+      x = c(grid_s, rev(grid_s)),
+      y = c(dnorm(grid_s, mu, sigma), rep(0, length(grid_s)))
+    )
+    vlines <- data.frame(x = c(mu, x0), lab = c("μ", "x"))
+  } else if (type == "between") {
+    a0 <- min(a, b)
+    b0 <- max(a, b)
+    grid_s <- grid[grid >= a0 & grid <= b0]
+    shade_df <- data.frame(
+      x = c(grid_s, rev(grid_s)),
+      y = c(dnorm(grid_s, mu, sigma), rep(0, length(grid_s)))
+    )
+    vlines <- data.frame(x = c(mu, a0, b0), lab = c("μ", "a", "b"))
+  }
+
+  ggplot(df, aes(x, y)) +
+    geom_line(linewidth = 1) +
+    if (!is.null(shade_df)) geom_polygon(data = shade_df, aes(x, y), alpha = 0.35, fill = "#667eea") else NULL +
+    geom_vline(data = vlines, aes(xintercept = x), linetype = "dashed") +
+    geom_text(data = vlines, aes(x = x, y = max(df$y)*0.95, label = lab),
+              vjust = -0.2, fontface = "bold") +
+    labs(title = title, x = "Value", y = "Density") +
+    theme_minimal(base_size = 13)
+}
+
+# Normal CDF plot (toggle view)
+normal_cdf_plot <- function(mu, sigma, type, x = NULL, a = NULL, b = NULL,
+                            title = "Normal CDF (cumulative probability)") {
+  sigma <- max(1e-9, sigma)
+  xmin <- mu - 4*sigma
+  xmax <- mu + 4*sigma
+  grid <- seq(xmin, xmax, length.out = 800)
+  cdf <- pnorm(grid, mean = mu, sd = sigma)
+  df <- data.frame(x = grid, cdf = cdf)
+
+  pts <- data.frame(x = numeric(0), y = numeric(0), lab = character(0))
+
+  if (type == "lt") {
+    y0 <- pnorm(x, mu, sigma)
+    pts <- rbind(pts, data.frame(x = x, y = y0, lab = paste0("P(X<x)=", round(y0, 3))))
+  } else if (type == "gt") {
+    y0 <- pnorm(x, mu, sigma)
+    pts <- rbind(pts, data.frame(x = x, y = y0, lab = paste0("P(X≤x)=", round(y0, 3))))
+  } else if (type == "between") {
+    a0 <- min(a, b); b0 <- max(a, b)
+    ya <- pnorm(a0, mu, sigma)
+    yb <- pnorm(b0, mu, sigma)
+    pts <- rbind(pts,
+                 data.frame(x = a0, y = ya, lab = paste0("F(a)=", round(ya, 3))),
+                 data.frame(x = b0, y = yb, lab = paste0("F(b)=", round(yb, 3))))
+  }
+
+  ggplot(df, aes(x, cdf)) +
+    geom_line(linewidth = 1) +
+    geom_hline(yintercept = c(0, 0.5, 1), linetype = "dotted", alpha = 0.4) +
+    if (nrow(pts) > 0) geom_point(data = pts, aes(x, y), size = 2) else NULL +
+    if (nrow(pts) > 0) geom_text(data = pts, aes(x, y, label = lab), vjust = -0.8, size = 3.4) else NULL +
+    if (nrow(pts) > 0) geom_vline(data = pts, aes(xintercept = x), linetype = "dashed") else NULL +
+    labs(title = title, x = "Value", y = "F(x) = P(X ≤ x)") +
+    theme_minimal(base_size = 13)
+}
+
+# Empirical rule plot (68-95-99.7)
+empirical_rule_plot <- function(mu, sigma) {
+  sigma <- max(1e-9, sigma)
+  xmin <- mu - 4*sigma
+  xmax <- mu + 4*sigma
+  grid <- seq(xmin, xmax, length.out = 900)
+  y <- dnorm(grid, mean = mu, sd = sigma)
+  df <- data.frame(x = grid, y = y)
+
+  band <- function(k, alpha_fill) {
+    a <- mu - k*sigma
+    b <- mu + k*sigma
+    grid_s <- grid[grid >= a & grid <= b]
+    data.frame(
+      x = c(grid_s, rev(grid_s)),
+      y = c(dnorm(grid_s, mu, sigma), rep(0, length(grid_s))),
+      k = paste0("±", k, "σ"),
+      alpha = alpha_fill
+    )
+  }
+
+  s1 <- band(1, 0.50)
+  s2 <- band(2, 0.28)
+  s3 <- band(3, 0.16)
+  shade <- rbind(s3, s2, s1)
+
+  vlines <- data.frame(x = c(mu - 3*sigma, mu - 2*sigma, mu - 1*sigma, mu,
+                             mu + 1*sigma, mu + 2*sigma, mu + 3*sigma),
+                       lab = c("μ-3σ","μ-2σ","μ-1σ","μ","μ+1σ","μ+2σ","μ+3σ"))
+
+  ggplot(df, aes(x, y)) +
+    geom_line(linewidth = 1) +
+    geom_polygon(data = subset(shade, k == "±3σ"), aes(x, y), fill = "#667eea", alpha = 0.16) +
+    geom_polygon(data = subset(shade, k == "±2σ"), aes(x, y), fill = "#667eea", alpha = 0.28) +
+    geom_polygon(data = subset(shade, k == "±1σ"), aes(x, y), fill = "#667eea", alpha = 0.50) +
+    geom_vline(data = vlines, aes(xintercept = x), linetype = "dashed", alpha = 0.6) +
+    labs(title = "Empirical rule (68–95–99.7) visualization",
+         x = "Value", y = "Density") +
+    theme_minimal(base_size = 13)
+}
+
+# Compare two normals plot
+compare_normals_plot <- function(mu1, s1, mu2, s2) {
+  s1 <- max(1e-9, s1); s2 <- max(1e-9, s2)
+  xmin <- min(mu1 - 4*s1, mu2 - 4*s2)
+  xmax <- max(mu1 + 4*s1, mu2 + 4*s2)
+  grid <- seq(xmin, xmax, length.out = 900)
+
+  df <- rbind(
+    data.frame(x = grid, y = dnorm(grid, mu1, s1), model = "Curve 1"),
+    data.frame(x = grid, y = dnorm(grid, mu2, s2), model = "Curve 2")
+  )
+
+  ggplot(df, aes(x, y, linetype = model)) +
+    geom_line(linewidth = 1) +
+    labs(title = "Compare two normal curves",
+         x = "Value", y = "Density") +
+    theme_minimal(base_size = 13)
+}
+
+# =============================================================================
+# UI
+# =============================================================================
+ui <- fluidPage(
+  tags$head(
+    tags$style(HTML("
+      :root { --primary:#667eea; --secondary:#764ba2; }
+      body { padding-bottom: 80px; }
+
+      .header {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        padding: 26px; color: white; margin-bottom: 18px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.12);
+      }
+
+      .level-badge {
+        display:inline-block; padding:6px 14px; border-radius: 18px;
+        font-weight: 800; font-size: 12px; margin-right: 10px;
+        background: #28a745; color: white;
+      }
+      .level-badge.l2 { background: #17a2b8; }
+      .level-badge.l3 { background: #ffc107; color: #222; }
+      .level-badge.l4 { background: #fd7e14; color: white; }
+      .level-badge.l5 { background: #6f42c1; color: white; }
+      .level-badge.l6 { background: #0d6efd; color: white; }
+
+      .difficulty {
+        display:inline-block; padding:4px 10px; border-radius: 14px;
+        font-size: 12px; font-weight: 800; margin-left: 8px;
+        background: #f1f3f5; color: #333;
+      }
+
+      .teaching-box {
+        background: #f8f9fa;
+        border-left: 4px solid var(--primary);
+        padding: 14px;
+        margin: 14px 0;
+        border-radius: 6px;
+      }
+      .teaching-box h4, .teaching-box h5 {
+        color: var(--primary); margin-top: 0; font-weight: 800;
+      }
+
+      .plot-container {
+        background: white;
+        padding: 16px;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        margin: 16px 0;
+      }
+
+      .metric-card {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white;
+        padding: 14px;
+        border-radius: 10px;
+        text-align: center;
+        margin: 10px 0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.18);
+      }
+      .metric-label { font-size: 12px; opacity: 0.95; text-transform: uppercase; letter-spacing: 1px; }
+      .metric-value { font-size: 24px; font-weight: 900; margin-top: 6px; }
+      .metric-sub { font-size: 11px; opacity: 0.85; margin-top: 4px; }
+
+      .quiz-correct {
+        background: #d4edda; border: 1px solid #c3e6cb; color: #155724;
+        padding: 10px; border-radius: 6px; margin-top: 10px;
+      }
+      .quiz-incorrect {
+        background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24;
+        padding: 10px; border-radius: 6px; margin-top: 10px;
+      }
+
+      .app-footer {
+        position: fixed; bottom: 0; left: 0; right: 0;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        color: white; padding: 10px 18px;
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.15);
+        z-index: 1000; font-size: 12px;
+      }
+      .footer-content { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+      @media (max-width: 768px) {
+        .footer-content { flex-direction: column; text-align:center; }
+        body { padding-bottom: 120px; }
+      }
+    "))
+  ),
+
+  div(class = "header",
+      h1("📘 Probability Learning System", style = "margin:0; font-weight: 900;"),
+      h4("Select the level on the left → the right side updates (Concept • Options • Visuals • Quiz • Guide)",
+         style="margin: 10px 0 0 0; opacity: 0.95; font-weight: 400;")
+  ),
+
+  sidebarLayout(
+    sidebarPanel(
+      width = 3,
+      h4("🎛️ Learning Controls"),
+
+      selectInput(
+        "level",
+        "Select Level:",
+        choices = c(
+          "Level 1: Probability Basics" = "L1",
+          "Level 2: Compound Events" = "L2",
+          "Level 3: Counting Methods" = "L3",
+          "Level 4: Discrete Distributions" = "L4",
+          "Level 5: Continuous (Normal)" = "L5",
+          "Level 6: Normal Toolkit (Advanced features)" = "L6"
+        ),
+        selected = "L1"
+      ),
+
+      hr(),
+
+      # ---------------- Level 1 Controls ----------------
+      conditionalPanel(
+        condition = "input.level == 'L1'",
+        h5("Level 1 Options"),
+        selectInput(
+          "l1_topic",
+          "Choose Topic:",
+          choices = c(
+            "Concept (Definition + Rules)" = "concept",
+            "Example: Coin" = "coin",
+            "Example: Dice" = "dice",
+            "Example: Cards" = "cards"
+          ),
+          selected = "concept"
+        ),
+        conditionalPanel(
+          condition = "input.l1_topic == 'coin'",
+          radioButtons("coin_event", "Event:", choices = c("Head (H)"="H", "Tail (T)"="T"), selected = "H")
+        ),
+        conditionalPanel(
+          condition = "input.l1_topic == 'dice'",
+          selectInput(
+            "dice_event", "Event type:",
+            choices = c("Exact number" = "exact", "Even number" = "even", "Odd number" = "odd", "Greater than 4" = "gt4"),
+            selected = "exact"
+          ),
+          conditionalPanel(
+            condition = "input.dice_event == 'exact'",
+            sliderInput("dice_k", "Choose number:", min = 1, max = 6, value = 6, step = 1)
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l1_topic == 'cards'",
+          selectInput(
+            "card_event", "Event:",
+            choices = c(
+              "Ace" = "ace",
+              "King" = "king",
+              "Heart" = "heart",
+              "Spade" = "spade",
+              "Red card (Hearts or Diamonds)" = "red",
+              "Face card (J,Q,K)" = "face"
+            ),
+            selected = "ace"
+          )
+        ),
+        hr(),
+        tags$small("Level 1 uses classical probability (equally likely outcomes).")
+      ),
+
+      # ---------------- Level 2 Controls ----------------
+      conditionalPanel(
+        condition = "input.level == 'L2'",
+        h5("Level 2 Options"),
+        selectInput(
+          "scenario2",
+          "Scenario (A and B):",
+          choices = c(
+            "Business: Customer buys A and B" = "buyAB",
+            "Business: Email opened (A) and clicked (B)" = "email",
+            "General: Event A and Event B" = "general"
+          ),
+          selected = "buyAB"
+        ),
+        sliderInput("pA", "P(A):", min = 0, max = 1, value = 0.40, step = 0.01),
+        sliderInput("pB", "P(B):", min = 0, max = 1, value = 0.30, step = 0.01),
+        checkboxInput("mutual", "Mutually Exclusive? (No overlap)", value = FALSE),
+        uiOutput("pAB_ui"),
+        hr(),
+        tags$small("Rule: overlap P(A∩B) cannot be larger than P(A) or P(B).")
+      ),
+
+      # ---------------- Level 3 Controls ----------------
+      conditionalPanel(
+        condition = "input.level == 'L3'",
+        h5("Level 3 Options"),
+        selectInput(
+          "l3_topic",
+          "Choose Topic:",
+          choices = c(
+            "Concept (Counting → Probability)" = "concept",
+            "Counting Principle (FCP)" = "fcp",
+            "Factorial (n!)" = "fact",
+            "Permutation (nPr)" = "perm",
+            "Combination (nCr)" = "comb",
+            "Order Matters? (Helper)" = "helper"
+          ),
+          selected = "concept"
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'fcp'",
+          sliderInput("fcp_steps", "Number of steps:", min = 2, max = 5, value = 3, step = 1),
+          uiOutput("fcp_choices_ui")
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'fact'",
+          sliderInput("fact_n", "Choose n:", min = 0, max = 12, value = 6, step = 1)
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'perm' || input.l3_topic == 'comb'",
+          sliderInput("n_val", "n (total items):", min = 1, max = 30, value = 10, step = 1),
+          sliderInput("r_val", "r (selected items):", min = 0, max = 10, value = 3, step = 1)
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'helper'",
+          radioButtons(
+            "order_matters",
+            "Does order matter?",
+            choices = c("Yes, order matters" = "yes", "No, order does not matter" = "no"),
+            selected = "no"
+          ),
+          sliderInput("helper_n", "n (total items):", min = 1, max = 30, value = 10, step = 1),
+          sliderInput("helper_r", "r (selected items):", min = 0, max = 10, value = 3, step = 1)
+        ),
+        hr(),
+        tags$small("Level 3 helps students count outcomes before computing probability.")
+      ),
+
+      # ---------------- Level 4 Controls ----------------
+      conditionalPanel(
+        condition = "input.level == 'L4'",
+        h5("Level 4 Options"),
+        selectInput(
+          "l4_topic",
+          "Choose Topic:",
+          choices = c(
+            "Concept (Discrete Random Variable)" = "concept",
+            "Binomial Distribution" = "binom",
+            "Poisson Distribution" = "pois",
+            "Which Distribution? (Helper)" = "which"
+          ),
+          selected = "concept"
+        ),
+
+        conditionalPanel(
+          condition = "input.l4_topic == 'binom'",
+          selectInput(
+            "binom_case",
+            "Business Example:",
+            choices = c(
+              "Custom" = "custom",
+              "Marketing: Email opened" = "email",
+              "Sales: Call conversion" = "sales",
+              "Operations: Defective items" = "defect"
+            ),
+            selected = "custom"
+          ),
+          sliderInput("b_n", "n (number of trials):", min = 1, max = 50, value = 10, step = 1),
+          sliderInput("b_p", "p (success probability):", min = 0, max = 1, value = 0.20, step = 0.01),
+          sliderInput("b_k", "k (successes):", min = 0, max = 10, value = 2, step = 1),
+          radioButtons(
+            "b_type",
+            "Calculate:",
+            choices = c("P(X = k)" = "eq", "P(X ≤ k)" = "le", "P(X ≥ k)" = "ge"),
+            selected = "eq"
+          )
+        ),
+
+        conditionalPanel(
+          condition = "input.l4_topic == 'pois'",
+          selectInput(
+            "pois_case",
+            "Business Example:",
+            choices = c(
+              "Custom" = "custom",
+              "Service: Customers per hour" = "cust",
+              "Support: Calls per day" = "calls",
+              "Operations: Failures per month" = "fail"
+            ),
+            selected = "custom"
+          ),
+          sliderInput("p_lambda", "λ (average rate):", min = 0, max = 20, value = 5, step = 0.1),
+          sliderInput("p_k", "k (events):", min = 0, max = 30, value = 3, step = 1),
+          radioButtons(
+            "p_type",
+            "Calculate:",
+            choices = c("P(X = k)" = "eq", "P(X ≤ k)" = "le", "P(X ≥ k)" = "ge"),
+            selected = "eq"
+          )
+        ),
+
+        conditionalPanel(
+          condition = "input.l4_topic == 'which'",
+          radioButtons(
+            "which_q1",
+            "Is there a fixed number of trials (n)?",
+            choices = c("Yes" = "yes", "No" = "no"),
+            selected = "yes"
+          ),
+          radioButtons(
+            "which_q2",
+            "Are there only two outcomes per trial (success/failure)?",
+            choices = c("Yes" = "yes", "No" = "no"),
+            selected = "yes"
+          ),
+          radioButtons(
+            "which_q3",
+            "Are we counting events in a time/space interval with average rate λ?",
+            choices = c("Yes" = "yes", "No" = "no"),
+            selected = "no"
+          )
+        ),
+
+        hr(),
+        tags$small("Level 4: discrete distributions (binomial & Poisson).")
+      ),
+
+      # ---------------- Level 5 Controls ----------------
+      conditionalPanel(
+        condition = "input.level == 'L5'",
+        h5("Level 5 Options"),
+        selectInput(
+          "l5_topic",
+          "Choose Topic:",
+          choices = c(
+            "Concept (Continuous probability)" = "concept",
+            "Normal Distribution Calculator" = "normal",
+            "Z-score Converter" = "z"
+          ),
+          selected = "concept"
+        ),
+
+        conditionalPanel(
+          condition = "input.l5_topic == 'normal'",
+          selectInput(
+            "norm_case",
+            "Business Example:",
+            choices = c(
+              "Custom" = "custom",
+              "Quality control: Weight (500g ± 10g)" = "qc",
+              "Exam scores (μ=60, σ=10)" = "exam",
+              "Investment returns (μ=8%, σ=12%)" = "inv",
+              "Delivery time (μ=45, σ=10) late > 60" = "del"
+            ),
+            selected = "custom"
+          ),
+          numericInput("norm_mu", "Mean (μ):", value = 100),
+          numericInput("norm_sigma", "Std. deviation (σ):", value = 15, min = 0.0001),
+
+          radioButtons(
+            "norm_type",
+            "Calculate:",
+            choices = c("P(X < x)" = "lt", "P(X > x)" = "gt", "P(a < X < b)" = "between"),
+            selected = "lt"
+          ),
+
+          conditionalPanel(
+            condition = "input.norm_type == 'lt' || input.norm_type == 'gt'",
+            numericInput("norm_x", "x value:", value = 120)
+          ),
+          conditionalPanel(
+            condition = "input.norm_type == 'between'",
+            numericInput("norm_a", "a (lower):", value = 90),
+            numericInput("norm_b", "b (upper):", value = 110)
+          )
+        ),
+
+        conditionalPanel(
+          condition = "input.l5_topic == 'z'",
+          selectInput(
+            "z_case",
+            "Example:",
+            choices = c(
+              "Custom" = "custom",
+              "Quality control: μ=500, σ=5, x=510" = "qc",
+              "Exam: μ=60, σ=10, x=75" = "exam",
+              "Investment: μ=8, σ=12, x=0 (negative return?)" = "inv"
+            ),
+            selected = "custom"
+          ),
+          numericInput("z_mu", "Mean (μ):", value = 100),
+          numericInput("z_sigma", "Std. deviation (σ):", value = 15, min = 0.0001),
+          numericInput("z_x", "Value (x):", value = 130)
+        )
+      ),
+
+      # ---------------- Level 6 Controls (ALL 7 features) ----------------
+      conditionalPanel(
+        condition = "input.level == 'L6'",
+        h5("Level 6: Normal Toolkit"),
+        selectInput(
+          "l6_topic",
+          "Choose Tool:",
+          choices = c(
+            "Normal Calculator (PDF/CDF + Z + steps)" = "calc",
+            "Percentile Finder (Inverse Normal)" = "inv",
+            "Empirical Rule (68–95–99.7)" = "emp",
+            "Quality Control (Spec Limits)" = "qc",
+            "Compare Two Normals" = "comp"
+          ),
+          selected = "calc"
+        ),
+
+        hr(),
+
+        # Common toggle: PDF vs CDF (feature 5)
+        conditionalPanel(
+          condition = "input.l6_topic == 'calc' || input.l6_topic == 'qc'",
+          radioButtons(
+            "l6_view",
+            "View:",
+            choices = c("PDF (area under curve)" = "pdf", "CDF (cumulative)" = "cdf"),
+            selected = "pdf",
+            inline = TRUE
+          )
+        ),
+
+        # Normal calculator (features 1,5,6)
+        conditionalPanel(
+          condition = "input.l6_topic == 'calc'",
+          numericInput("l6_mu", "Mean (μ):", value = 100),
+          numericInput("l6_sigma", "Std. deviation (σ):", value = 15, min = 0.0001),
+
+          radioButtons(
+            "l6_prob_type",
+            "Calculate:",
+            choices = c("P(X < x)" = "lt", "P(X > x)" = "gt", "P(a < X < b)" = "between"),
+            selected = "lt"
+          ),
+          conditionalPanel(
+            condition = "input.l6_prob_type == 'lt' || input.l6_prob_type == 'gt'",
+            numericInput("l6_x", "x:", value = 120)
+          ),
+          conditionalPanel(
+            condition = "input.l6_prob_type == 'between'",
+            numericInput("l6_a", "a (lower):", value = 90),
+            numericInput("l6_b", "b (upper):", value = 110)
+          ),
+          checkboxInput("l6_show_steps", "Show step-by-step explanation", value = TRUE)
+        ),
+
+        # Percentile finder (feature 2)
+        conditionalPanel(
+          condition = "input.l6_topic == 'inv'",
+          numericInput("inv_mu", "Mean (μ):", value = 100),
+          numericInput("inv_sigma", "Std. deviation (σ):", value = 15, min = 0.0001),
+          sliderInput("inv_p", "Percentile p = P(X < x):", min = 0.01, max = 0.99, value = 0.90, step = 0.01),
+          checkboxInput("inv_show_steps", "Show step-by-step explanation", value = TRUE)
+        ),
+
+        # Empirical rule (feature 3)
+        conditionalPanel(
+          condition = "input.l6_topic == 'emp'",
+          numericInput("emp_mu", "Mean (μ):", value = 100),
+          numericInput("emp_sigma", "Std. deviation (σ):", value = 15, min = 0.0001)
+        ),
+
+        # Spec limits QC (feature 4 + 1 + 5 + 6)
+        conditionalPanel(
+          condition = "input.l6_topic == 'qc'",
+          numericInput("qc_mu", "Mean (μ):", value = 500),
+          numericInput("qc_sigma", "Std. deviation (σ):", value = 5, min = 0.0001),
+          numericInput("qc_lsl", "LSL (lower spec):", value = 490),
+          numericInput("qc_usl", "USL (upper spec):", value = 510),
+          checkboxInput("qc_show_steps", "Show step-by-step explanation", value = TRUE)
+        ),
+
+        # Compare two normals (feature 7)
+        conditionalPanel(
+          condition = "input.l6_topic == 'comp'",
+          h6("Curve 1"),
+          numericInput("c1_mu", "μ1:", value = 100),
+          numericInput("c1_sigma", "σ1:", value = 15, min = 0.0001),
+          hr(),
+          h6("Curve 2"),
+          numericInput("c2_mu", "μ2:", value = 110),
+          numericInput("c2_sigma", "σ2:", value = 25, min = 0.0001),
+          hr(),
+          numericInput("comp_x", "Optional: compare P(X < x) at x =", value = 120)
+        ),
+
+        hr(),
+        tags$small("Level 6 focuses on NORMAL distribution tools (no simulation).")
+      )
+    ),
+
+    mainPanel(
+      width = 9,
+
+      # =============================================================================
+      # LEVEL 1 RIGHT PANEL
+      # =============================================================================
+      conditionalPanel(
+        condition = "input.level == 'L1'",
+        br(),
+        h3(span(class="level-badge", "LEVEL 1"),
+           "Probability Basics",
+           span(class="difficulty", "Beginner")),
+        div(class="teaching-box",
+            h4("Concept"),
+            p(strong("Probability"), " is a number that tells how likely an event is to happen."),
+            p(strong("Range:"), " 0 to 1 (0 = impossible, 1 = certain)."),
+            p(strong("Sample space (S):"), " all possible outcomes."),
+            p(strong("Event (A):"), " the outcome(s) we are interested in."),
+            tags$pre("Classical probability:  P(A) = (favorable outcomes) / (total outcomes)"),
+            tags$pre("Complement:            P(Not A) = 1 − P(A)")
+        ),
+        conditionalPanel(
+          condition = "input.l1_topic == 'concept'",
+          div(class="plot-container",
+              h4("Options • Difficulty"),
+              tags$ul(
+                tags$li("Use fair games: coin, dice, cards."),
+                tags$li("First count outcomes, then compute P(A)."),
+                tags$li("Use complement when easier: P(Not A)=1−P(A).")
+              )
+          ),
+          div(class="teaching-box",
+              h4("Quick Examples"),
+              tags$ul(
+                tags$li(strong("Coin:"), " S={H,T}, so P(H)=1/2."),
+                tags$li(strong("Dice:"), " S={1,2,3,4,5,6}, so P(6)=1/6."),
+                tags$li(strong("Cards:"), " 52 cards, 4 aces, so P(Ace)=4/52.")
+              )
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l1_topic == 'coin'",
+          div(class="plot-container",
+              h4("Visuals"),
+              div(class="teaching-box",
+                  h5("Sample space"),
+                  tags$pre("S = {H, T}")
+              ),
+              fluidRow(
+                column(4, uiOutput("coin_fav")),
+                column(4, uiOutput("coin_total")),
+                column(4, uiOutput("coin_prob"))
+              ),
+              plotOutput("coin_plot", height = "320px"),
+              div(class="teaching-box",
+                  h4("Complement (Not Event)"),
+                  uiOutput("coin_comp")
+              )
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l1_topic == 'dice'",
+          div(class="plot-container",
+              h4("Visuals"),
+              div(class="teaching-box",
+                  h5("Sample space"),
+                  tags$pre("S = {1, 2, 3, 4, 5, 6}")
+              ),
+              fluidRow(
+                column(4, uiOutput("dice_fav")),
+                column(4, uiOutput("dice_total")),
+                column(4, uiOutput("dice_prob"))
+              ),
+              plotOutput("dice_plot", height = "340px"),
+              div(class="teaching-box",
+                  h4("Complement (Not Event)"),
+                  uiOutput("dice_comp")
+              )
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l1_topic == 'cards'",
+          div(class="plot-container",
+              h4("Visuals"),
+              div(class="teaching-box",
+                  h5("Deck facts"),
+                  tags$ul(
+                    tags$li("52 total cards"),
+                    tags$li("4 suits: Hearts, Diamonds, Clubs, Spades (13 each)"),
+                    tags$li("4 Aces, 4 Kings, 12 face cards (J,Q,K)")
+                  )
+              ),
+              fluidRow(
+                column(4, uiOutput("card_fav")),
+                column(4, uiOutput("card_total")),
+                column(4, uiOutput("card_prob"))
+              ),
+              plotOutput("card_plot", height = "320px"),
+              div(class="teaching-box",
+                  h4("Complement (Not Event)"),
+                  uiOutput("card_comp")
+              )
+          )
+        ),
+        div(class="plot-container",
+            h4("Quiz (Level 1)"),
+            uiOutput("l1_quiz_ui"),
+            actionButton("check_l1", "Check Answer", class="btn-primary"),
+            uiOutput("l1_feedback")
+        ),
+        div(class="plot-container",
+            h4("Guide (Level 1)"),
+            tags$pre("
+Core ideas:
+  Sample space (S): all outcomes
+  Event (A): outcomes of interest
+
+Classical probability:
+  P(A) = favorable / total
+
+Complement:
+  P(Not A) = 1 - P(A)
+")
+        )
+      ),
+
+      # =============================================================================
+      # LEVEL 2 RIGHT PANEL
+      # =============================================================================
+      conditionalPanel(
+        condition = "input.level == 'L2'",
+        br(),
+        h3(span(class="level-badge l2", "LEVEL 2"),
+           "Compound Events",
+           span(class="difficulty", "Beginner+")),
+        div(class="teaching-box",
+            h4("Concept"),
+            tags$pre("Union:        P(A ∪ B) = P(A) + P(B) − P(A ∩ B)"),
+            tags$pre("Intersection: P(A ∩ B) = probability that both happen"),
+            tags$pre("Conditional:  P(A | B) = P(A ∩ B) / P(B)"),
+            tags$pre("Mutually exclusive: P(A ∩ B) = 0")
+        ),
+        div(class="plot-container",
+            h4("Visuals + Results"),
+            fluidRow(
+              column(3, uiOutput("m_pA")),
+              column(3, uiOutput("m_pB")),
+              column(3, uiOutput("m_pAB")),
+              column(3, uiOutput("m_pUnion"))
+            ),
+            plotOutput("venn_plot", height = "320px"),
+            uiOutput("compound_explain")
+        ),
+        div(class="plot-container",
+            h4("Quiz (Level 2)"),
+            radioButtons(
+              "l2_answer",
+              "If P(A)=0.4, P(B)=0.3, P(A∩B)=0.1, then P(A∪B)= ?",
+              choices = c("0.8"="a", "0.6"="b", "0.5"="c"),
+              selected = character(0)
+            ),
+            actionButton("check_l2", "Check Answer", class="btn-primary"),
+            uiOutput("l2_feedback")
+        ),
+        div(class="plot-container",
+            h4("Guide (Level 2)"),
+            tags$pre("
+Use these:
+  P(A ∪ B) = P(A) + P(B) − P(A ∩ B)
+  P(A | B) = P(A ∩ B) / P(B)
+
+Tips:
+  Mutually exclusive → overlap = 0.
+  Conditional means: 'Given B happened, what is chance of A?'
+")
+        )
+      ),
+
+      # =============================================================================
+      # LEVEL 3 RIGHT PANEL
+      # =============================================================================
+      conditionalPanel(
+        condition = "input.level == 'L3'",
+        br(),
+        h3(span(class="level-badge l3", "LEVEL 3"),
+           "Counting Methods (Combinatorics)",
+           span(class="difficulty", "Beginner+")),
+        div(class="teaching-box",
+            h4("Concept"),
+            p("Many probability questions become easy when you can count:"),
+            tags$pre("Probability = (Favorable ways) / (Total ways)"),
+            p("Level 3 teaches how to count total ways.")
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'concept'",
+          div(class="plot-container",
+              h4("What you will learn"),
+              tags$ul(
+                tags$li(strong("Counting Principle:"), " multiply choices across steps."),
+                tags$li(strong("Factorial:"), " used to count arrangements."),
+                tags$li(strong("Permutation (order matters):"), " arrange/select with positions."),
+                tags$li(strong("Combination (order doesn't matter):"), " select a group.")
+              )
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'fcp'",
+          div(class="plot-container",
+              h4("Counting Principle (FCP)"),
+              uiOutput("fcp_result_cards"),
+              plotOutput("fcp_plot", height = "280px"),
+              uiOutput("fcp_explain")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'fact'",
+          div(class="plot-container",
+              h4("Factorial (n!)"),
+              uiOutput("fact_cards"),
+              plotOutput("fact_plot", height = "280px"),
+              uiOutput("fact_explain")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'perm'",
+          div(class="plot-container",
+              h4("Permutation (nPr) — Order matters"),
+              uiOutput("perm_cards"),
+              uiOutput("perm_explain")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'comb'",
+          div(class="plot-container",
+              h4("Combination (nCr) — Order does not matter"),
+              uiOutput("comb_cards"),
+              uiOutput("comb_explain")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l3_topic == 'helper'",
+          div(class="plot-container",
+              h4("Order Matters? Helper"),
+              uiOutput("helper_cards"),
+              uiOutput("helper_explain")
+          )
+        ),
+        div(class="plot-container",
+            h4("Quiz (Level 3)"),
+            uiOutput("l3_quiz_ui"),
+            actionButton("check_l3", "Check Answer", class="btn-primary"),
+            uiOutput("l3_feedback")
+        ),
+        div(class="plot-container",
+            h4("Guide (Level 3)"),
+            tags$pre("
+Core formulas:
+  Counting principle: total = a × b × c × ...
+
+  Factorial: n! = n × (n−1) × ... × 1
+  Permutation: nPr = n! / (n−r)!
+  Combination: nCr = n! / [r!(n−r)!]
+
+Decision:
+  Order matters → permutation
+  Order doesn't matter → combination
+")
+        )
+      ),
+
+      # =============================================================================
+      # LEVEL 4 RIGHT PANEL
+      # =============================================================================
+      conditionalPanel(
+        condition = "input.level == 'L4'",
+        br(),
+        h3(span(class="level-badge l4", "LEVEL 4"),
+           "Discrete Distributions",
+           span(class="difficulty", "Intermediate (easy start)")),
+        div(class="teaching-box",
+            h4("Concept"),
+            p(strong("Random variable (X):"), " a number that results from a random process."),
+            p(strong("Discrete X:"), " takes values like 0, 1, 2, 3, ..."),
+            tags$pre("PMF: P(X = x) for each possible value x")
+        ),
+        conditionalPanel(
+          condition = "input.l4_topic == 'concept'",
+          div(class="plot-container",
+              h4("Example PMF (simple)"),
+              plotOutput("rv_pmf_plot", height = "300px")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l4_topic == 'binom'",
+          div(class="plot-container",
+              h4("Binomial Results"),
+              fluidRow(
+                column(3, uiOutput("b_prob_card")),
+                column(3, uiOutput("b_mean_card")),
+                column(3, uiOutput("b_sd_card")),
+                column(3, uiOutput("b_used_card"))
+              ),
+              plotOutput("binom_pmf_plot", height = "320px"),
+              uiOutput("binom_explain")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l4_topic == 'pois'",
+          div(class="plot-container",
+              h4("Poisson Results"),
+              fluidRow(
+                column(3, uiOutput("p_prob_card")),
+                column(3, uiOutput("p_mean_card")),
+                column(3, uiOutput("p_var_card")),
+                column(3, uiOutput("p_used_card"))
+              ),
+              plotOutput("pois_pmf_plot", height = "320px"),
+              uiOutput("pois_explain")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.l4_topic == 'which'",
+          div(class="plot-container",
+              h4("Which Distribution?"),
+              uiOutput("which_result")
+          )
+        ),
+        div(class="plot-container",
+            h4("Quiz (Level 4)"),
+            uiOutput("l4_quiz_ui"),
+            actionButton("check_l4", "Check Answer", class="btn-primary"),
+            uiOutput("l4_feedback")
+        )
+      ),
+
+      # =============================================================================
+      # LEVEL 5 RIGHT PANEL
+      # =============================================================================
+      conditionalPanel(
+        condition = "input.level == 'L5'",
+        br(),
+        h3(span(class="level-badge l5", "LEVEL 5"),
+           "Continuous Probability (Normal)",
+           span(class="difficulty", "Intermediate (beginner-friendly)")),
+
+        div(class="teaching-box",
+            h4("Concept"),
+            p(strong("Continuous variable:"), " can take any value in a range."),
+            p(strong("Key point:"), " P(X = exact value) = 0 → probability is for an interval (area).")
+        ),
+
+        conditionalPanel(
+          condition = "input.l5_topic == 'concept'",
+          div(class="plot-container",
+              h4("Continuous idea (area)"),
+              plotOutput("cont_concept_plot", height = "320px")
+          )
+        ),
+
+        conditionalPanel(
+          condition = "input.l5_topic == 'normal'",
+          div(class="plot-container",
+              h4("Normal Results"),
+              fluidRow(
+                column(3, uiOutput("n_prob_card")),
+                column(3, uiOutput("n_mu_card")),
+                column(3, uiOutput("n_sigma_card")),
+                column(3, uiOutput("n_stmt_card"))
+              ),
+              plotOutput("normal_shade_plot", height = "340px"),
+              uiOutput("normal_explain")
+          )
+        ),
+
+        conditionalPanel(
+          condition = "input.l5_topic == 'z'",
+          div(class="plot-container",
+              h4("Z-score Results"),
+              fluidRow(
+                column(3, uiOutput("z_card")),
+                column(3, uiOutput("z_left_card")),
+                column(3, uiOutput("z_right_card")),
+                column(3, uiOutput("z_stmt_card"))
+              ),
+              plotOutput("z_plot", height = "340px"),
+              uiOutput("z_explain")
+          )
+        ),
+
+        div(class="plot-container",
+            h4("Quiz (Level 5)"),
+            uiOutput("l5_quiz_ui"),
+            actionButton("check_l5", "Check Answer", class="btn-primary"),
+            uiOutput("l5_feedback")
+        )
+      ),
+
+      # =============================================================================
+      # LEVEL 6 RIGHT PANEL (ALL 7 NORMAL FEATURES)
+      # =============================================================================
+      conditionalPanel(
+        condition = "input.level == 'L6'",
+        br(),
+        h3(span(class="level-badge l6", "LEVEL 6"),
+           "Normal Distribution Toolkit",
+           span(class="difficulty", "More practice tools")),
+
+        div(class="teaching-box",
+            h4("Concept (Normal Toolkit)"),
+            p("This level gives multiple tools for normal distribution (business use)."),
+            tags$ul(
+              tags$li("Auto Z-score for values (x, a, b)."),
+              tags$li("Percentiles (inverse normal)."),
+              tags$li("Empirical rule visualization (68–95–99.7)."),
+              tags$li("Quality control with spec limits."),
+              tags$li("PDF vs CDF toggle."),
+              tags$li("Step-by-step explanation."),
+              tags$li("Compare two normal curves.")
+            )
+        ),
+
+        # Tool: calculator
+        conditionalPanel(
+          condition = "input.l6_topic == 'calc'",
+          div(class="plot-container",
+              h4("Options + Results"),
+              fluidRow(
+                column(3, uiOutput("l6_prob_card")),
+                column(3, uiOutput("l6_z_card")),
+                column(3, uiOutput("l6_mu_card")),
+                column(3, uiOutput("l6_sigma_card"))
+              ),
+              uiOutput("l6_statement"),
+              plotOutput("l6_plot", height = "360px"),
+              uiOutput("l6_steps")
+          )
+        ),
+
+        # Tool: inverse/percentile
+        conditionalPanel(
+          condition = "input.l6_topic == 'inv'",
+          div(class="plot-container",
+              h4("Percentile Finder (Inverse Normal)"),
+              fluidRow(
+                column(3, uiOutput("inv_x_card")),
+                column(3, uiOutput("inv_z_card")),
+                column(3, uiOutput("inv_mu_card")),
+                column(3, uiOutput("inv_sigma_card"))
+              ),
+              uiOutput("inv_statement"),
+              plotOutput("inv_plot", height = "360px"),
+              uiOutput("inv_steps")
+          )
+        ),
+
+        # Tool: empirical rule
+        conditionalPanel(
+          condition = "input.l6_topic == 'emp'",
+          div(class="plot-container",
+              h4("Empirical Rule Visual"),
+              fluidRow(
+                column(4, uiOutput("emp_68_card")),
+                column(4, uiOutput("emp_95_card")),
+                column(4, uiOutput("emp_997_card"))
+              ),
+              plotOutput("emp_plot", height = "360px"),
+              div(class="teaching-box",
+                  h5("Beginner interpretation"),
+                  p("≈68% within μ±1σ, ≈95% within μ±2σ, ≈99.7% within μ±3σ (rule of thumb).")
+              )
+          )
+        ),
+
+        # Tool: QC spec limits
+        conditionalPanel(
+          condition = "input.l6_topic == 'qc'",
+          div(class="plot-container",
+              h4("Quality Control (Spec Limits)"),
+              fluidRow(
+                column(3, uiOutput("qc_within_card")),
+                column(3, uiOutput("qc_below_card")),
+                column(3, uiOutput("qc_above_card")),
+                column(3, uiOutput("qc_zlims_card"))
+              ),
+              uiOutput("qc_statement"),
+              plotOutput("qc_plot", height = "360px"),
+              uiOutput("qc_steps")
+          )
+        ),
+
+        # Tool: compare two normals
+        conditionalPanel(
+          condition = "input.l6_topic == 'comp'",
+          div(class="plot-container",
+              h4("Compare Two Normal Curves"),
+              fluidRow(
+                column(3, uiOutput("comp1_card")),
+                column(3, uiOutput("comp2_card")),
+                column(3, uiOutput("comp_px1_card")),
+                column(3, uiOutput("comp_px2_card"))
+              ),
+              plotOutput("comp_plot", height = "360px"),
+              div(class="teaching-box",
+                  h5("How to read"),
+                  p("Changing μ shifts the curve left/right. Changing σ makes it narrower/wider.")
+              )
+          )
+        ),
+
+        div(class="plot-container",
+            h4("Quiz (Level 6)"),
+            uiOutput("l6_quiz_ui"),
+            actionButton("check_l6", "Check Answer", class="btn-primary"),
+            uiOutput("l6_feedback")
+        ),
+
+        div(class="plot-container",
+            h4("Guide (Level 6)"),
+            tags$pre("
+Normal toolbox summary:
+
+(1) Z-score:
+  z = (x − μ) / σ
+
+(2) Percentile (inverse):
+  If p = P(X < x), then x = qnorm(p, μ, σ)
+
+(3) Empirical rule:
+  About 68% within μ±1σ
+  About 95% within μ±2σ
+  About 99.7% within μ±3σ
+
+(4) Spec limits:
+  P(LSL < X < USL) is 'within spec'
+  Below spec = P(X < LSL)
+  Above spec = P(X > USL)
+
+(5) PDF vs CDF:
+  PDF: shaded area = probability
+  CDF: F(x) = P(X ≤ x)
+
+(6) Step-by-step:
+  Always compute z, then use pnorm/qnorm.
+
+(7) Compare curves:
+  μ shifts, σ spreads
+")
+        )
+      )
+    )
+  ),
+
+  tags$footer(
+    class = "app-footer",
+    div(class="footer-content",
+        div(strong("Developed by: Dr. M.I.M. Riyath | Department of Accountancy and Finance | South Eastern University of Sri Lanka"),
+            "|"),
+        div(tags$a(href="mailto:riyath@seu.ac.lk", "riyath@seu.ac.lk",
+                   target="_blank", style="color:white; text-decoration:underline;"))
+    )
+  )
+)
+
+# =============================================================================
+# SERVER
+# =============================================================================
+server <- function(input, output, session) {
+
+  # ---------------- Level 1: Coin ----------------
+  output$coin_fav   <- renderUI(metric_card("Favorable", "1", "event outcomes"))
+  output$coin_total <- renderUI(metric_card("Total", "2", "all outcomes"))
+  output$coin_prob  <- renderUI(metric_card("P(Event)", fmt_pct(0.5), fmt_frac(1,2)))
+
+  output$coin_plot <- renderPlot({
+    df <- data.frame(Outcome = c("Head", "Tail"), Probability = c(0.5, 0.5))
+    prob_bar(df, "Fair coin outcomes")
+  })
+
+  output$coin_comp <- renderUI({
+    div(
+      p(strong("If event is "), input$coin_event, ":"),
+      p("P(Not event) = 1 - P(Event) = 1 - 0.50 = 0.50")
+    )
+  })
+
+  # ---------------- Level 1: Dice ----------------
+  dice_info <- reactive({
+    total <- 6
+    fav <- switch(
+      input$dice_event,
+      exact = 1,
+      even  = 3,
+      odd   = 3,
+      gt4   = 2
+    )
+    p <- fav / total
+    list(fav=fav, total=total, p=p)
+  })
+
+  output$dice_fav   <- renderUI(metric_card("Favorable", as.character(dice_info()$fav), "event outcomes"))
+  output$dice_total <- renderUI(metric_card("Total", "6", "all outcomes"))
+  output$dice_prob  <- renderUI(metric_card("P(Event)", fmt_pct(dice_info()$p), fmt_frac(dice_info()$fav, 6)))
+
+  output$dice_plot <- renderPlot({
+    df <- data.frame(Outcome = factor(1:6), Probability = rep(1/6, 6))
+    prob_bar(df, "Fair die outcomes")
+  })
+
+  output$dice_comp <- renderUI({
+    p <- dice_info()$p
+    div(p("P(Not event) = 1 - P(Event) = 1 - ", round(p,3), " = ", round(1-p,3)))
+  })
+
+  # ---------------- Level 1: Cards ----------------
+  card_info <- reactive({
+    total <- 52
+    fav <- switch(
+      input$card_event,
+      ace   = 4,
+      king  = 4,
+      heart = 13,
+      spade = 13,
+      red   = 26,
+      face  = 12
+    )
+    p <- fav / total
+    list(fav=fav, total=total, p=p)
+  })
+
+  output$card_fav   <- renderUI(metric_card("Favorable", as.character(card_info()$fav), "event cards"))
+  output$card_total <- renderUI(metric_card("Total", "52", "cards in deck"))
+  output$card_prob  <- renderUI(metric_card("P(Event)", fmt_pct(card_info()$p), fmt_frac(card_info()$fav, 52)))
+
+  output$card_plot <- renderPlot({
+    p <- card_info()$p
+    df <- data.frame(Outcome = c("Event", "Not Event"), Probability = c(p, 1-p))
+    prob_bar(df, "Event vs Not Event")
+  })
+
+  output$card_comp <- renderUI({
+    p <- card_info()$p
+    div(p("P(Not event) = 1 - P(Event) = 1 - ", round(p,4), " = ", round(1-p,4)))
+  })
+
+  # ---------------- Level 1 Quiz ----------------
+  l1_quiz <- reactive({
+    switch(
+      input$l1_topic,
+      concept = list(
+        q = "If P(A)=0.30, what is P(Not A)?",
+        choices = c("0.70"="a","0.30"="b","1.30"="c"),
+        correct = "a",
+        explain = "Complement: 1−0.30=0.70."
+      ),
+      coin = list(
+        q = "For a fair coin, what is P(Head)?",
+        choices = c("1/2"="a","1/6"="b","1"="c"),
+        correct = "a",
+        explain = "Two equally likely outcomes → 1/2."
+      ),
+      dice = list(
+        q = "For a fair die, what is P(rolling a 6)?",
+        choices = c("1/2"="a","1/6"="b","6/6"="c"),
+        correct = "b",
+        explain = "Six equally likely outcomes → 1/6."
+      ),
+      cards = list(
+        q = "From a 52-card deck, what is P(Ace)?",
+        choices = c("4/52"="a","1/52"="b","13/52"="c"),
+        correct = "a",
+        explain = "There are 4 Aces → 4/52."
+      )
+    )
+  })
+
+  output$l1_quiz_ui <- renderUI({
+    q <- l1_quiz()
+    radioButtons("l1_answer", q$q, choices = q$choices, selected = character(0))
+  })
+
+  observeEvent(input$check_l1, {
+    output$l1_feedback <- renderUI({
+      q <- l1_quiz()
+      if (is.null(input$l1_answer) || input$l1_answer == "") {
+        return(div(class="quiz-incorrect", "Please select an answer."))
+      }
+      if (input$l1_answer == q$correct) div(class="quiz-correct", paste0("Correct ✅  ", q$explain))
+      else div(class="quiz-incorrect", paste0("Not correct ❌  ", q$explain))
+    })
+  })
+
+  # ---------------- Level 2 overlap slider UI ----------------
+  output$pAB_ui <- renderUI({
+    req(input$level == "L2")
+    maxAB <- min(input$pA, input$pB)
+    if (isTRUE(input$mutual)) {
+      sliderInput("pAB", "P(A ∩ B) (overlap):", min = 0, max = 0, value = 0, step = 0.01)
+    } else {
+      sliderInput("pAB", "P(A ∩ B) (overlap):", min = 0, max = maxAB, value = min(0.10, maxAB), step = 0.01)
+    }
+  })
+
+  compound_vals <- reactive({
+    req(input$level == "L2")
+    req(!is.null(input$pAB))
+    pA <- input$pA
+    pB <- input$pB
+    pAB <- input$pAB
+    pUnion <- pA + pB - pAB
+
+    ok1 <- (pAB <= pA + 1e-9) && (pAB <= pB + 1e-9)
+    ok2 <- (pUnion >= -1e-9) && (pUnion <= 1 + 1e-9)
+    list(pA=pA, pB=pB, pAB=pAB, pUnion=pUnion, ok=(ok1 && ok2))
+  })
+
+  output$m_pA <- renderUI({ req(input$level=="L2"); metric_card("P(A)", fmt_pct(compound_vals()$pA, 2), "event A") })
+  output$m_pB <- renderUI({ req(input$level=="L2"); metric_card("P(B)", fmt_pct(compound_vals()$pB, 2), "event B") })
+  output$m_pAB <- renderUI({ req(input$level=="L2"); metric_card("P(A ∩ B)", fmt_pct(compound_vals()$pAB, 2), "both happen") })
+
+  output$m_pUnion <- renderUI({
+    req(input$level=="L2")
+    v <- compound_vals()
+    if (!v$ok) return(metric_card("P(A ∪ B)", "Invalid", "adjust overlap"))
+    metric_card("P(A ∪ B)", fmt_pct(v$pUnion, 2), "A or B (or both)")
+  })
+
+  output$venn_plot <- renderPlot({
+    req(input$level=="L2")
+    v <- compound_vals()
+    validate(need(v$ok, "Invalid values. Please adjust P(A), P(B), or overlap P(A∩B)."))
+
+    A <- circle_df(center = c(-0.6, 0), r = 1, id = "A")
+    B <- circle_df(center = c( 0.6, 0), r = 1, id = "B")
+    cir <- rbind(A, B)
+
+    ggplot() +
+      geom_path(data = cir, aes(x=x, y=y, group=id), linewidth = 1) +
+      annotate("text", x = -1.25, y = 1.10, label = "A", fontface = "bold") +
+      annotate("text", x =  1.25, y = 1.10, label = "B", fontface = "bold") +
+      coord_equal() +
+      theme_void(base_size = 13) +
+      labs(title = "Venn picture (shape only)",
+           subtitle = "Use formulas for union, intersection, conditional probability.")
+  })
+
+  output$compound_explain <- renderUI({
+    req(input$level=="L2")
+    v <- compound_vals()
+    validate(need(v$ok, "Invalid values. Please adjust inputs."))
+
+    labA <- switch(input$scenario2, buyAB="Customer buys Product A", email="Email opened", general="Event A")
+    labB <- switch(input$scenario2, buyAB="Customer buys Product B", email="Link clicked", general="Event B")
+
+    pA <- v$pA; pB <- v$pB; pAB <- v$pAB; pU <- v$pUnion
+    pA_given_B <- if (pB > 0) pAB / pB else NA
+
+    div(
+      div(class="teaching-box",
+          h5("Meaning"),
+          p("A = ", labA),
+          p("B = ", labB)
+      ),
+      p(strong("Union (A or B): "),
+        "P(A ∪ B) = P(A) + P(B) − P(A ∩ B) = ",
+        round(pA,2), " + ", round(pB,2), " − ", round(pAB,2),
+        " = ", strong(round(pU,2))
+      ),
+      p(strong("Intersection (A and B): "),
+        "P(A ∩ B) = ", strong(round(pAB,2))
+      ),
+      p(strong("Conditional: "),
+        "P(A | B) = P(A ∩ B) / P(B) = ",
+        round(pAB,2), " / ", round(pB,2),
+        " = ", strong(ifelse(is.na(pA_given_B), "N/A", round(pA_given_B,2)))
+      )
+    )
+  })
+
+  observeEvent(input$check_l2, {
+    output$l2_feedback <- renderUI({
+      if (is.null(input$l2_answer) || input$l2_answer == "") return(div(class="quiz-incorrect", "Please select an answer."))
+      if (input$l2_answer == "b") div(class="quiz-correct", "Correct ✅  P(A∪B)=0.4+0.3−0.1=0.6")
+      else div(class="quiz-incorrect", "Not correct ❌  Use: P(A∪B)=P(A)+P(B)−P(A∩B).")
+    })
+  })
+
+  # ---------------- Level 3: FCP dynamic UI ----------------
+  output$fcp_choices_ui <- renderUI({
+    req(input$level == "L3", input$l3_topic == "fcp")
+    n <- input$fcp_steps
+    tags$div(
+      lapply(seq_len(n), function(i) {
+        numericInput(paste0("fcp_c", i), paste0("Choices at step ", i, ":"), value = 10, min = 1)
+      })
+    )
+  })
+
+  fcp_vals <- reactive({
+    req(input$level == "L3", input$l3_topic == "fcp")
+    n <- input$fcp_steps
+    choices <- sapply(seq_len(n), function(i) input[[paste0("fcp_c", i)]])
+    total <- prod(choices)
+    list(choices = choices, total = total)
+  })
+
+  output$fcp_result_cards <- renderUI({
+    v <- fcp_vals()
+    choices_txt <- paste(v$choices, collapse = " × ")
+    fluidRow(
+      column(4, metric_card("Steps", as.character(length(v$choices)), "number of decisions")),
+      column(4, metric_card("Multiply", choices_txt, "choices per step")),
+      column(4, metric_card("Total Ways", format(v$total, big.mark=","), "final count"))
+    )
+  })
+
+  output$fcp_plot <- renderPlot({
+    v <- fcp_vals()
+    df <- data.frame(Step = factor(seq_along(v$choices)), Choices = as.numeric(v$choices))
+    ggplot(df, aes(x = Step, y = Choices)) +
+      geom_col(fill = "#667eea") +
+      labs(title = "Choices at each step", x = "Step", y = "Number of choices") +
+      theme_minimal(base_size = 13)
+  })
+
+  output$fcp_explain <- renderUI({
+    v <- fcp_vals()
+    div(class="teaching-box",
+        h5("Explanation"),
+        p("Multiply choices across steps."),
+        p(strong("Total ways = "), paste(v$choices, collapse = " × "), " = ", strong(format(v$total, big.mark=",")))
+    )
+  })
+
+  # ---------------- Level 3: Factorial ----------------
+  fact_vals <- reactive({
+    req(input$level == "L3", input$l3_topic == "fact")
+    n <- input$fact_n
+    list(n=n, value=fact(n))
+  })
+
+  output$fact_cards <- renderUI({
+    v <- fact_vals()
+    metric_card(paste0(v$n, "!"), format(v$value, big.mark=","), "factorial value")
+  })
+
+  output$fact_plot <- renderPlot({
+    req(input$level=="L3", input$l3_topic=="fact")
+    nmax <- 10
+    df <- data.frame(n = 0:nmax, val = sapply(0:nmax, fact))
+    ggplot(df, aes(x = n, y = val)) +
+      geom_line() +
+      geom_point() +
+      labs(title = "Factorial grows fast", x = "n", y = "n!") +
+      theme_minimal(base_size = 13)
+  })
+
+  output$fact_explain <- renderUI({
+    v <- fact_vals()
+    n <- v$n
+    exp_txt <- if (n == 0) "0! is defined as 1."
+    else if (n == 1) "1! = 1."
+    else paste0(n, "! = ", n, " × ", paste((n-1):1, collapse = " × "))
+    div(class="teaching-box",
+        h5("Explanation"),
+        p(exp_txt),
+        p("Factorial is used in permutations and combinations.")
+    )
+  })
+
+  nr_safe <- reactive({
+    n <- input$n_val
+    r <- input$r_val
+    if (!is.null(n) && !is.null(r) && r > n) r <- n
+    list(n=n, r=r)
+  })
+
+  output$perm_cards <- renderUI({
+    req(input$level=="L3", input$l3_topic=="perm")
+    x <- nr_safe()
+    val <- nPr(x$n, x$r)
+    fluidRow(
+      column(4, metric_card("n", as.character(x$n), "total items")),
+      column(4, metric_card("r", as.character(x$r), "selected/positions")),
+      column(4, metric_card("nPr", format(val, big.mark=","), "order matters"))
+    )
+  })
+
+  output$perm_explain <- renderUI({
+    req(input$level=="L3", input$l3_topic=="perm")
+    div(class="teaching-box",
+        h5("Formula"),
+        tags$pre("nPr = n! / (n − r)!"),
+        p("Use permutation when ", strong("order matters"), " (different roles).")
+    )
+  })
+
+  output$comb_cards <- renderUI({
+    req(input$level=="L3", input$l3_topic=="comb")
+    x <- nr_safe()
+    val <- nCr(x$n, x$r)
+    fluidRow(
+      column(4, metric_card("n", as.character(x$n), "total items")),
+      column(4, metric_card("r", as.character(x$r), "selected items")),
+      column(4, metric_card("nCr", format(val, big.mark=","), "order not important"))
+    )
+  })
+
+  output$comb_explain <- renderUI({
+    req(input$level=="L3", input$l3_topic=="comb")
+    div(class="teaching-box",
+        h5("Formula"),
+        tags$pre("nCr = n! / [r!(n − r)!]"),
+        p("Use combination when ", strong("order does NOT matter"), ".")
+    )
+  })
+
+  helper_vals <- reactive({
+    req(input$level=="L3", input$l3_topic=="helper")
+    n <- input$helper_n
+    r <- input$helper_r
+    if (r > n) r <- n
+    if (input$order_matters == "yes") {
+      val <- nPr(n, r); type <- "Permutation (order matters)"; formula <- "nPr = n! / (n − r)!"
+    } else {
+      val <- nCr(n, r); type <- "Combination (order does not matter)"; formula <- "nCr = n! / [r!(n − r)!]"
+    }
+    list(n=n, r=r, val=val, type=type, formula=formula)
+  })
+
+  output$helper_cards <- renderUI({
+    v <- helper_vals()
+    fluidRow(
+      column(4, metric_card("n", as.character(v$n), "total items")),
+      column(4, metric_card("r", as.character(v$r), "selected")),
+      column(4, metric_card("Answer", format(v$val, big.mark=","), v$type))
+    )
+  })
+
+  output$helper_explain <- renderUI({
+    v <- helper_vals()
+    div(class="teaching-box",
+        h5("Decision"),
+        p(strong("Result: "), v$type),
+        p(strong("Formula: "), v$formula)
+    )
+  })
+
+  l3_quiz <- reactive({
+    switch(
+      input$l3_topic,
+      fcp = list(
+        q = "How many 3-digit PIN codes (0–9) if repetition is allowed?",
+        choices = c("30"="a", "1000"="b", "720"="c"),
+        correct = "b",
+        explain = "10×10×10 = 1000."
+      ),
+      fact = list(
+        q = "What is 4! ?",
+        choices = c("24"="a", "16"="b", "12"="c"),
+        correct = "a",
+        explain = "4×3×2×1 = 24."
+      ),
+      perm = list(
+        q = "Select President and Vice President from 10 students. Which method?",
+        choices = c("Combination"="a", "Permutation"="b", "Neither"="c"),
+        correct = "b",
+        explain = "Order matters → permutation."
+      ),
+      comb = list(
+        q = "Choose 3 people from 10 for a committee. Which method?",
+        choices = c("Combination"="a", "Permutation"="b", "Neither"="c"),
+        correct = "a",
+        explain = "Order does not matter → combination."
+      ),
+      helper = list(
+        q = "Arrange 4 books in a line. Which method?",
+        choices = c("Combination"="a", "Permutation"="b", "Counting principle only"="c"),
+        correct = "b",
+        explain = "Arranging means order matters → 4!."
+      ),
+      concept = list(
+        q = "Which statement is correct?",
+        choices = c("Permutation when order matters"="a", "Combination when order matters"="b", "Factorial means addition"="c"),
+        correct = "a",
+        explain = "Permutation is used when order matters."
+      )
+    )
+  })
+
+  output$l3_quiz_ui <- renderUI({
+    req(input$level=="L3")
+    q <- l3_quiz()
+    radioButtons("l3_answer", q$q, choices = q$choices, selected = character(0))
+  })
+
+  observeEvent(input$check_l3, {
+    output$l3_feedback <- renderUI({
+      q <- l3_quiz()
+      if (is.null(input$l3_answer) || input$l3_answer == "") return(div(class="quiz-incorrect", "Please select an answer."))
+      if (input$l3_answer == q$correct) div(class="quiz-correct", paste0("Correct ✅  ", q$explain))
+      else div(class="quiz-incorrect", paste0("Not correct ❌  ", q$explain))
+    })
+  })
+
+  # =============================================================================
+  # LEVEL 4
+  # =============================================================================
+  output$rv_pmf_plot <- renderPlot({
+    req(input$level=="L4")
+    df <- data.frame(Outcome = factor(0:3), Probability = c(0.10, 0.30, 0.40, 0.20))
+    prob_bar(df, "Example discrete random variable X (PMF)")
+  })
+
+  observeEvent(input$binom_case, {
+    req(input$level=="L4", input$l4_topic=="binom")
+    if (input$binom_case == "email") {
+      updateSliderInput(session, "b_n", value = 20)
+      updateSliderInput(session, "b_p", value = 0.30)
+      updateSliderInput(session, "b_k", max = 20, value = 6)
+    } else if (input$binom_case == "sales") {
+      updateSliderInput(session, "b_n", value = 15)
+      updateSliderInput(session, "b_p", value = 0.20)
+      updateSliderInput(session, "b_k", max = 15, value = 3)
+    } else if (input$binom_case == "defect") {
+      updateSliderInput(session, "b_n", value = 25)
+      updateSliderInput(session, "b_p", value = 0.05)
+      updateSliderInput(session, "b_k", max = 25, value = 1)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$b_n, {
+    req(input$level=="L4", input$l4_topic=="binom")
+    updateSliderInput(session, "b_k", max = input$b_n, value = min(input$b_k, input$b_n))
+  }, ignoreInit = TRUE)
+
+  binom_vals <- reactive({
+    req(input$level=="L4", input$l4_topic=="binom")
+    n <- input$b_n; p <- input$b_p; k <- input$b_k
+    pmf <- dbinom_safe(0:n, n=n, p=p)
+    prob <- switch(input$b_type,
+                   eq = dbinom_safe(k, n=n, p=p),
+                   le = pbinom_le(k, n=n, p=p),
+                   ge = pbinom_ge(k, n=n, p=p))
+    mean <- n*p
+    sd <- sqrt(n*p*(1-p))
+    list(n=n,p=p,k=k,prob=prob,mean=mean,sd=sd,pmf=pmf)
+  })
+
+  output$b_prob_card <- renderUI({
+    v <- binom_vals()
+    label <- switch(input$b_type, eq="P(X=k)", le="P(X≤k)", ge="P(X≥k)")
+    metric_card(label, fmt_pct(v$prob, 2), paste0("k=", v$k))
+  })
+  output$b_mean_card <- renderUI({ v <- binom_vals(); metric_card("Mean", round(v$mean,3), "np") })
+  output$b_sd_card   <- renderUI({ v <- binom_vals(); metric_card("SD", round(v$sd,3), "sqrt(np(1-p))") })
+  output$b_used_card <- renderUI({ v <- binom_vals(); metric_card("Model", "Binomial", paste0("n=",v$n,", p=",round(v$p,2))) })
+
+  output$binom_pmf_plot <- renderPlot({
+    v <- binom_vals()
+    df <- data.frame(x = 0:v$n, prob = v$pmf)
+    df$highlight <- FALSE
+    if (input$b_type == "eq") df$highlight[df$x == v$k] <- TRUE
+    if (input$b_type == "le") df$highlight[df$x <= v$k] <- TRUE
+    if (input$b_type == "ge") df$highlight[df$x >= v$k] <- TRUE
+
+    ggplot(df, aes(x=factor(x), y=prob, fill=highlight)) +
+      geom_col() +
+      scale_fill_manual(values = c("FALSE"="grey70", "TRUE"="#667eea"), guide="none") +
+      labs(title = "Binomial PMF", x = "x (successes)", y = "P(X=x)") +
+      theme_minimal(base_size = 13)
+  })
+
+  output$binom_explain <- renderUI({
+    v <- binom_vals()
+    calc_txt <- switch(input$b_type,
+                       eq=paste0("P(X = ",v$k,")"),
+                       le=paste0("P(X ≤ ",v$k,")"),
+                       ge=paste0("P(X ≥ ",v$k,")"))
+    div(class="teaching-box",
+        h5("Meaning + formula"),
+        tags$pre("P(X=k) = nCk × p^k × (1-p)^(n-k)"),
+        p(strong("You calculated: "), calc_txt, " = ", strong(round(v$prob, 6)))
+    )
+  })
+
+  observeEvent(input$pois_case, {
+    req(input$level=="L4", input$l4_topic=="pois")
+    if (input$pois_case == "cust") {
+      updateSliderInput(session, "p_lambda", value = 6); updateSliderInput(session, "p_k", value = 4)
+    } else if (input$pois_case == "calls") {
+      updateSliderInput(session, "p_lambda", value = 12); updateSliderInput(session, "p_k", value = 10)
+    } else if (input$pois_case == "fail") {
+      updateSliderInput(session, "p_lambda", value = 2); updateSliderInput(session, "p_k", value = 1)
+    }
+  }, ignoreInit = TRUE)
+
+  pois_vals <- reactive({
+    req(input$level=="L4", input$l4_topic=="pois")
+    lambda <- input$p_lambda; k <- input$p_k
+    max_x <- max(20, k + 10)
+    x <- 0:max_x
+    pmf <- dpois_safe(x, lambda=lambda)
+    prob <- switch(input$p_type,
+                   eq = dpois_safe(k, lambda=lambda),
+                   le = ppois_le(k, lambda=lambda),
+                   ge = ppois_ge(k, lambda=lambda))
+    list(lambda=lambda, k=k, prob=prob, pmf=pmf, x=x)
+  })
+
+  output$p_prob_card <- renderUI({
+    v <- pois_vals()
+    label <- switch(input$p_type, eq="P(X=k)", le="P(X≤k)", ge="P(X≥k)")
+    metric_card(label, fmt_pct(v$prob, 2), paste0("k=", v$k))
+  })
+  output$p_mean_card <- renderUI({ v <- pois_vals(); metric_card("Mean", round(v$lambda,3), "λ") })
+  output$p_var_card  <- renderUI({ v <- pois_vals(); metric_card("Variance", round(v$lambda,3), "λ") })
+  output$p_used_card <- renderUI({ v <- pois_vals(); metric_card("Model", "Poisson", paste0("λ=",round(v$lambda,2))) })
+
+  output$pois_pmf_plot <- renderPlot({
+    v <- pois_vals()
+    df <- data.frame(x = v$x, prob = v$pmf)
+    df$highlight <- FALSE
+    if (input$p_type == "eq") df$highlight[df$x == v$k] <- TRUE
+    if (input$p_type == "le") df$highlight[df$x <= v$k] <- TRUE
+    if (input$p_type == "ge") df$highlight[df$x >= v$k] <- TRUE
+
+    ggplot(df, aes(x=factor(x), y=prob, fill=highlight)) +
+      geom_col() +
+      scale_fill_manual(values = c("FALSE"="grey70", "TRUE"="#667eea"), guide="none") +
+      labs(title = "Poisson PMF", x = "x (events)", y = "P(X=x)") +
+      theme_minimal(base_size = 13)
+  })
+
+  output$pois_explain <- renderUI({
+    v <- pois_vals()
+    calc_txt <- switch(input$p_type,
+                       eq=paste0("P(X = ",v$k,")"),
+                       le=paste0("P(X ≤ ",v$k,")"),
+                       ge=paste0("P(X ≥ ",v$k,")"))
+    div(class="teaching-box",
+        h5("Meaning + formula"),
+        tags$pre("P(X=k) = (λ^k × e^(−λ)) / k!"),
+        p(strong("You calculated: "), calc_txt, " = ", strong(round(v$prob, 6)))
+    )
+  })
+
+  output$which_result <- renderUI({
+    req(input$level=="L4", input$l4_topic=="which")
+    q1 <- input$which_q1; q2 <- input$which_q2; q3 <- input$which_q3
+
+    if (q1 == "yes" && q2 == "yes") {
+      rec <- "Binomial"; why <- "Fixed n trials and two outcomes."
+    } else if (q3 == "yes") {
+      rec <- "Poisson"; why <- "Counting events in an interval with average rate λ."
+    } else {
+      rec <- "Neither (for now)"; why <- "This app level focuses on Binomial and Poisson only."
+    }
+
+    div(
+      fluidRow(
+        column(6, metric_card("Recommendation", rec, "distribution")),
+        column(6, metric_card("Reason", "See below", "simple rule"))
+      ),
+      div(class="teaching-box",
+          h5("Explanation"),
+          p(why)
+      )
+    )
+  })
+
+  l4_quiz <- reactive({
+    switch(
+      input$l4_topic,
+      binom = list(
+        q="Binomial: 'exactly k successes' means which probability?",
+        choices=c("P(X=k)"="a","P(X≤k)"="b","P(X≥k)"="c"),
+        correct="a",
+        explain="“Exactly” → P(X=k)."
+      ),
+      pois = list(
+        q="Poisson is used when we count events in:",
+        choices=c("A time/space interval with rate λ"="a","Fixed trials with p"="b","Card draws only"="c"),
+        correct="a",
+        explain="Poisson counts events in an interval."
+      ),
+      which = list(
+        q="Fixed n trials + success/failure → which distribution?",
+        choices=c("Binomial"="a","Poisson"="b","None"="c"),
+        correct="a",
+        explain="That is Binomial."
+      ),
+      concept = list(
+        q="A discrete random variable takes values like:",
+        choices=c("0,1,2,3..."="a","Any decimal"="b","Only negatives"="c"),
+        correct="a",
+        explain="Discrete outcomes are countable."
+      )
+    )
+  })
+
+  output$l4_quiz_ui <- renderUI({
+    req(input$level=="L4")
+    q <- l4_quiz()
+    radioButtons("l4_answer", q$q, choices=q$choices, selected=character(0))
+  })
+
+  observeEvent(input$check_l4, {
+    output$l4_feedback <- renderUI({
+      q <- l4_quiz()
+      if (is.null(input$l4_answer) || input$l4_answer=="") return(div(class="quiz-incorrect","Please select an answer."))
+      if (input$l4_answer==q$correct) div(class="quiz-correct", paste0("Correct ✅  ", q$explain))
+      else div(class="quiz-incorrect", paste0("Not correct ❌  ", q$explain))
+    })
+  })
+
+  # =============================================================================
+  # LEVEL 5 (basic normal + z)
+  # =============================================================================
+  output$cont_concept_plot <- renderPlot({
+    req(input$level=="L5")
+    normal_plot_with_shade(mu=0, sigma=1, type="between", a=-1, b=1,
+                           title="Continuous idea: probability as area")
+  })
+
+  observeEvent(input$norm_case, {
+    req(input$level=="L5", input$l5_topic=="normal")
+    if (input$norm_case == "qc") {
+      updateNumericInput(session, "norm_mu", value = 500)
+      updateNumericInput(session, "norm_sigma", value = 5)
+      updateRadioButtons(session, "norm_type", selected = "between")
+      updateNumericInput(session, "norm_a", value = 490)
+      updateNumericInput(session, "norm_b", value = 510)
+    } else if (input$norm_case == "exam") {
+      updateNumericInput(session, "norm_mu", value = 60)
+      updateNumericInput(session, "norm_sigma", value = 10)
+      updateRadioButtons(session, "norm_type", selected = "gt")
+      updateNumericInput(session, "norm_x", value = 75)
+    } else if (input$norm_case == "inv") {
+      updateNumericInput(session, "norm_mu", value = 8)
+      updateNumericInput(session, "norm_sigma", value = 12)
+      updateRadioButtons(session, "norm_type", selected = "lt")
+      updateNumericInput(session, "norm_x", value = 0)
+    } else if (input$norm_case == "del") {
+      updateNumericInput(session, "norm_mu", value = 45)
+      updateNumericInput(session, "norm_sigma", value = 10)
+      updateRadioButtons(session, "norm_type", selected = "gt")
+      updateNumericInput(session, "norm_x", value = 60)
+    }
+  }, ignoreInit = TRUE)
+
+  normal_vals <- reactive({
+    req(input$level=="L5", input$l5_topic=="normal")
+    mu <- as.numeric(input$norm_mu)
+    sigma <- max(1e-9, as.numeric(input$norm_sigma))
+    type <- input$norm_type
+
+    if (type == "lt") {
+      x <- as.numeric(input$norm_x)
+      prob <- pnorm(x, mu, sigma)
+      stmt <- paste0("About ", fmt_pct(prob,2), " are below x = ", x, ".")
+      list(mu=mu,sigma=sigma,type=type,x=x,prob=prob,stmt=stmt)
+    } else if (type == "gt") {
+      x <- as.numeric(input$norm_x)
+      prob <- 1 - pnorm(x, mu, sigma)
+      stmt <- paste0("About ", fmt_pct(prob,2), " are above x = ", x, ".")
+      list(mu=mu,sigma=sigma,type=type,x=x,prob=prob,stmt=stmt)
+    } else {
+      a <- as.numeric(input$norm_a)
+      b <- as.numeric(input$norm_b)
+      lo <- min(a,b); hi <- max(a,b)
+      prob <- pnorm(hi, mu, sigma) - pnorm(lo, mu, sigma)
+      stmt <- paste0("About ", fmt_pct(prob,2), " are between ", lo, " and ", hi, ".")
+      list(mu=mu,sigma=sigma,type=type,a=lo,b=hi,prob=prob,stmt=stmt)
+    }
+  })
+
+  output$n_prob_card <- renderUI({
+    v <- normal_vals()
+    label <- switch(v$type, lt="P(X<x)", gt="P(X>x)", between="P(a<X<b)")
+    metric_card(label, fmt_pct(v$prob,2), "normal probability")
+  })
+  output$n_mu_card <- renderUI({ v <- normal_vals(); metric_card("Mean (μ)", round(v$mu,3), "center") })
+  output$n_sigma_card <- renderUI({ v <- normal_vals(); metric_card("SD (σ)", round(v$sigma,3), "spread") })
+  output$n_stmt_card <- renderUI({ metric_card("Interpretation", "See below", "statement") })
+
+  output$normal_shade_plot <- renderPlot({
+    v <- normal_vals()
+    if (v$type == "lt") normal_plot_with_shade(v$mu, v$sigma, "lt", x=v$x)
+    else if (v$type == "gt") normal_plot_with_shade(v$mu, v$sigma, "gt", x=v$x)
+    else normal_plot_with_shade(v$mu, v$sigma, "between", a=v$a, b=v$b)
+  })
+
+  output$normal_explain <- renderUI({
+    v <- normal_vals()
+    div(class="teaching-box",
+        h5("Explanation"),
+        p(v$stmt),
+        tags$pre("Use pnorm() for normal probabilities.")
+    )
+  })
+
+  observeEvent(input$z_case, {
+    req(input$level=="L5", input$l5_topic=="z")
+    if (input$z_case == "qc") {
+      updateNumericInput(session, "z_mu", value = 500)
+      updateNumericInput(session, "z_sigma", value = 5)
+      updateNumericInput(session, "z_x", value = 510)
+    } else if (input$z_case == "exam") {
+      updateNumericInput(session, "z_mu", value = 60)
+      updateNumericInput(session, "z_sigma", value = 10)
+      updateNumericInput(session, "z_x", value = 75)
+    } else if (input$z_case == "inv") {
+      updateNumericInput(session, "z_mu", value = 8)
+      updateNumericInput(session, "z_sigma", value = 12)
+      updateNumericInput(session, "z_x", value = 0)
+    }
+  }, ignoreInit = TRUE)
+
+  z_vals <- reactive({
+    req(input$level=="L5", input$l5_topic=="z")
+    mu <- as.numeric(input$z_mu)
+    sigma <- max(1e-9, as.numeric(input$z_sigma))
+    x <- as.numeric(input$z_x)
+    z <- (x - mu)/sigma
+    left <- pnorm(z)
+    right <- 1 - pnorm(z)
+    stmt <- if (z >= 0) paste0("x is ", round(z,2), " SD above μ.") else paste0("x is ", abs(round(z,2)), " SD below μ.")
+    list(mu=mu,sigma=sigma,x=x,z=z,left=left,right=right,stmt=stmt)
+  })
+
+  output$z_card <- renderUI({ v <- z_vals(); metric_card("Z-score", round(v$z,3), "z=(x−μ)/σ") })
+  output$z_left_card <- renderUI({ v <- z_vals(); metric_card("P(Z < z)", fmt_pct(v$left,2), "left area") })
+  output$z_right_card <- renderUI({ v <- z_vals(); metric_card("P(Z > z)", fmt_pct(v$right,2), "right area") })
+  output$z_stmt_card <- renderUI({ metric_card("Meaning", "See below", "interpretation") })
+
+  output$z_plot <- renderPlot({
+    v <- z_vals()
+    normal_plot_with_shade(0,1,"lt",x=v$z, title="Standard normal (μ=0, σ=1): shaded P(Z < z)")
+  })
+
+  output$z_explain <- renderUI({
+    v <- z_vals()
+    div(class="teaching-box",
+        h5("Explanation"),
+        p(strong("z = (x − μ) / σ")), p("Here: z = ", round(v$z,4)),
+        p(v$stmt),
+        p("P(Z < z) = ", fmt_pct(v$left,2), " and P(Z > z) = ", fmt_pct(v$right,2), ".")
+    )
+  })
+
+  l5_quiz <- reactive({
+    switch(
+      input$l5_topic,
+      concept = list(
+        q="For continuous distributions, which statement is correct?",
+        choices=c("P(X = exact value) = 0"="a","Probability is not area"="b","Exact value has big probability"="c"),
+        correct="a",
+        explain="Continuous probability is about intervals (area)."
+      ),
+      normal = list(
+        q="Which expression gives P(X > x) for normal?",
+        choices=c("pnorm(x, μ, σ)"="a","1 - pnorm(x, μ, σ)"="b","dnorm(x, μ, σ)"="c"),
+        correct="b",
+        explain="Right tail: 1−pnorm(x,μ,σ)."
+      ),
+      z = list(
+        q="Z-score formula is:",
+        choices=c("(μ − x)/σ"="a","(x − μ)/σ"="b","x/σ"="c"),
+        correct="b",
+        explain="z = (x − μ)/σ."
+      )
+    )
+  })
+
+  output$l5_quiz_ui <- renderUI({
+    req(input$level=="L5")
+    q <- l5_quiz()
+    radioButtons("l5_answer", q$q, choices=q$choices, selected=character(0))
+  })
+
+  observeEvent(input$check_l5, {
+    output$l5_feedback <- renderUI({
+      q <- l5_quiz()
+      if (is.null(input$l5_answer) || input$l5_answer=="") return(div(class="quiz-incorrect","Please select an answer."))
+      if (input$l5_answer==q$correct) div(class="quiz-correct", paste0("Correct ✅  ", q$explain))
+      else div(class="quiz-incorrect", paste0("Not correct ❌  ", q$explain))
+    })
+  })
+
+  # =============================================================================
+  # LEVEL 6 (ALL 7 NORMAL FEATURES)
+  # =============================================================================
+
+  # (Calc) values
+  l6_calc_vals <- reactive({
+    req(input$level=="L6", input$l6_topic=="calc")
+    mu <- as.numeric(input$l6_mu)
+    sigma <- max(1e-9, as.numeric(input$l6_sigma))
+    type <- input$l6_prob_type
+
+    if (type == "lt") {
+      x <- as.numeric(input$l6_x)
+      prob <- pnorm(x, mu, sigma)
+      z <- (x - mu)/sigma
+      stmt <- paste0("P(X < ", x, ") = ", round(prob,6), " (", fmt_pct(prob,2), ").  z = ", round(z,3))
+      list(mu=mu,sigma=sigma,type=type,x=x,prob=prob,z=z, stmt=stmt)
+    } else if (type == "gt") {
+      x <- as.numeric(input$l6_x)
+      prob_le <- pnorm(x, mu, sigma)
+      prob <- 1 - prob_le
+      z <- (x - mu)/sigma
+      stmt <- paste0("P(X > ", x, ") = ", round(prob,6), " (", fmt_pct(prob,2), ").  z = ", round(z,3))
+      list(mu=mu,sigma=sigma,type=type,x=x,prob=prob,z=z, prob_le=prob_le, stmt=stmt)
+    } else {
+      a <- as.numeric(input$l6_a); b <- as.numeric(input$l6_b)
+      lo <- min(a,b); hi <- max(a,b)
+      p_lo <- pnorm(lo, mu, sigma)
+      p_hi <- pnorm(hi, mu, sigma)
+      prob <- p_hi - p_lo
+      zlo <- (lo - mu)/sigma
+      zhi <- (hi - mu)/sigma
+      stmt <- paste0("P(", lo, " < X < ", hi, ") = ", round(prob,6), " (", fmt_pct(prob,2), ").  z(a)=", round(zlo,3), ", z(b)=", round(zhi,3))
+      list(mu=mu,sigma=sigma,type=type,a=lo,b=hi,prob=prob,zlo=zlo,zhi=zhi, stmt=stmt,
+           p_lo=p_lo, p_hi=p_hi)
+    }
+  })
+
+  output$l6_prob_card <- renderUI({
+    v <- l6_calc_vals()
+    label <- switch(v$type, lt="P(X<x)", gt="P(X>x)", between="P(a<X<b)")
+    metric_card(label, fmt_pct(v$prob,2), "result")
+  })
+
+  output$l6_z_card <- renderUI({
+    v <- l6_calc_vals()
+    if (v$type == "between") {
+      metric_card("Z-scores", paste0("za=", round(v$zlo,2), ", zb=", round(v$zhi,2)), "auto z")
+    } else {
+      metric_card("Z-score", round(v$z,2), "auto z")
+    }
+  })
+
+  output$l6_mu_card <- renderUI({ v <- l6_calc_vals(); metric_card("μ", round(v$mu,3), "mean") })
+  output$l6_sigma_card <- renderUI({ v <- l6_calc_vals(); metric_card("σ", round(v$sigma,3), "sd") })
+
+  output$l6_statement <- renderUI({
+    v <- l6_calc_vals()
+    div(class="teaching-box",
+        h5("Interpretation"),
+        p(v$stmt)
+    )
+  })
+
+  output$l6_plot <- renderPlot({
+    v <- l6_calc_vals()
+    if (input$l6_view == "cdf") {
+      if (v$type == "lt") normal_cdf_plot(v$mu, v$sigma, "lt", x=v$x)
+      else if (v$type == "gt") normal_cdf_plot(v$mu, v$sigma, "gt", x=v$x,
+                                               title="Normal CDF (use 1−F(x) for right tail)")
+      else normal_cdf_plot(v$mu, v$sigma, "between", a=v$a, b=v$b)
+    } else {
+      if (v$type == "lt") normal_plot_with_shade(v$mu, v$sigma, "lt", x=v$x)
+      else if (v$type == "gt") normal_plot_with_shade(v$mu, v$sigma, "gt", x=v$x)
+      else normal_plot_with_shade(v$mu, v$sigma, "between", a=v$a, b=v$b)
+    }
+  })
+
+  output$l6_steps <- renderUI({
+    req(input$level=="L6", input$l6_topic=="calc")
+    if (!isTRUE(input$l6_show_steps)) return(NULL)
+    v <- l6_calc_vals()
+
+    if (v$type == "lt") {
+      div(class="teaching-box",
+          h5("Step-by-step"),
+          tags$ol(
+            tags$li(paste0("Compute z = (x − μ)/σ = (", v$x, " − ", v$mu, ")/", v$sigma, " = ", round(v$z,4))),
+            tags$li(paste0("Compute probability using normal CDF: P(X < x) = pnorm(x, μ, σ) = ", round(v$prob,6))),
+            tags$li("Write interpretation in words (percentage below x).")
+          )
+      )
+    } else if (v$type == "gt") {
+      div(class="teaching-box",
+          h5("Step-by-step"),
+          tags$ol(
+            tags$li(paste0("Compute z = (x − μ)/σ = ", round(v$z,4))),
+            tags$li(paste0("Compute left tail: P(X ≤ x) = pnorm(x, μ, σ) = ", round(v$prob_le,6))),
+            tags$li(paste0("Right tail: P(X > x) = 1 − P(X ≤ x) = ", round(v$prob,6))),
+            tags$li("Write interpretation in words (percentage above x).")
+          )
+      )
+    } else {
+      div(class="teaching-box",
+          h5("Step-by-step"),
+          tags$ol(
+            tags$li(paste0("Compute za = (a − μ)/σ = ", round(v$zlo,4), " and zb = (b − μ)/σ = ", round(v$zhi,4))),
+            tags$li(paste0("Compute F(a)=pnorm(a, μ, σ)=", round(v$p_lo,6), " and F(b)=pnorm(b, μ, σ)=", round(v$p_hi,6))),
+            tags$li(paste0("Probability between: P(a < X < b) = F(b) − F(a) = ", round(v$prob,6))),
+            tags$li("Write interpretation in words (percentage within interval).")
+          )
+      )
+    }
+  })
+
+  # (Inverse) percentile tool
+  inv_vals <- reactive({
+    req(input$level=="L6", input$l6_topic=="inv")
+    mu <- as.numeric(input$inv_mu)
+    sigma <- max(1e-9, as.numeric(input$inv_sigma))
+    p <- as.numeric(input$inv_p)
+    x <- qnorm(p, mean = mu, sd = sigma)
+    z <- qnorm(p) # standard normal
+    stmt <- paste0("The ", round(100*p,0), "th percentile is x = ", round(x,4), ". (Because P(X < x) = ", round(p,2), ")")
+    list(mu=mu,sigma=sigma,p=p,x=x,z=z,stmt=stmt)
+  })
+
+  output$inv_x_card <- renderUI({ v <- inv_vals(); metric_card("x (cutoff)", round(v$x,3), paste0("p=", round(v$p,2))) })
+  output$inv_z_card <- renderUI({ v <- inv_vals(); metric_card("z (std)", round(v$z,3), "qnorm(p)") })
+  output$inv_mu_card <- renderUI({ v <- inv_vals(); metric_card("μ", round(v$mu,3), "mean") })
+  output$inv_sigma_card <- renderUI({ v <- inv_vals(); metric_card("σ", round(v$sigma,3), "sd") })
+
+  output$inv_statement <- renderUI({
+    v <- inv_vals()
+    div(class="teaching-box",
+        h5("Interpretation"),
+        p(v$stmt),
+        p("Business meaning: This is the cutoff so that ", fmt_pct(v$p,0), " are below it.")
+    )
+  })
+
+  output$inv_plot <- renderPlot({
+    v <- inv_vals()
+    if (input$l6_view %in% c("pdf","cdf")) {
+      # for inverse we show PDF shading left tail by default
+      normal_plot_with_shade(v$mu, v$sigma, "lt", x=v$x,
+                             title = "Percentile: shaded area equals p")
+    } else {
+      normal_plot_with_shade(v$mu, v$sigma, "lt", x=v$x,
+                             title = "Percentile: shaded area equals p")
+    }
+  })
+
+  output$inv_steps <- renderUI({
+    req(input$level=="L6", input$l6_topic=="inv")
+    if (!isTRUE(input$inv_show_steps)) return(NULL)
+    v <- inv_vals()
+    div(class="teaching-box",
+        h5("Step-by-step"),
+        tags$ol(
+          tags$li(paste0("You choose p = ", round(v$p,2), " meaning P(X < x) = p.")),
+          tags$li(paste0("Compute x using inverse normal: x = qnorm(p, μ, σ).")),
+          tags$li(paste0("Here x = ", round(v$x,4), ".")),
+          tags$li("Interpret: p% of values are below x (and (1−p)% above x).")
+        )
+    )
+  })
+
+  # Empirical rule
+  emp_vals <- reactive({
+    req(input$level=="L6", input$l6_topic=="emp")
+    mu <- as.numeric(input$emp_mu)
+    sigma <- max(1e-9, as.numeric(input$emp_sigma))
+    p68 <- pnorm(mu+sigma, mu, sigma) - pnorm(mu-sigma, mu, sigma)
+    p95 <- pnorm(mu+2*sigma, mu, sigma) - pnorm(mu-2*sigma, mu, sigma)
+    p997 <- pnorm(mu+3*sigma, mu, sigma) - pnorm(mu-3*sigma, mu, sigma)
+    list(mu=mu,sigma=sigma,p68=p68,p95=p95,p997=p997)
+  })
+
+  output$emp_68_card <- renderUI({ v <- emp_vals(); metric_card("Within μ±1σ", fmt_pct(v$p68,2), "≈ 68%") })
+  output$emp_95_card <- renderUI({ v <- emp_vals(); metric_card("Within μ±2σ", fmt_pct(v$p95,2), "≈ 95%") })
+  output$emp_997_card <- renderUI({ v <- emp_vals(); metric_card("Within μ±3σ", fmt_pct(v$p997,2), "≈ 99.7%") })
+
+  output$emp_plot <- renderPlot({
+    v <- emp_vals()
+    empirical_rule_plot(v$mu, v$sigma)
+  })
+
+  # QC spec limits
+  qc_vals <- reactive({
+    req(input$level=="L6", input$l6_topic=="qc")
+    mu <- as.numeric(input$qc_mu)
+    sigma <- max(1e-9, as.numeric(input$qc_sigma))
+    lsl <- as.numeric(input$qc_lsl)
+    usl <- as.numeric(input$qc_usl)
+    lo <- min(lsl, usl); hi <- max(lsl, usl)
+
+    below <- pnorm(lo, mu, sigma)
+    within <- pnorm(hi, mu, sigma) - pnorm(lo, mu, sigma)
+    above <- 1 - pnorm(hi, mu, sigma)
+
+    z_lsl <- (lo - mu)/sigma
+    z_usl <- (hi - mu)/sigma
+
+    stmt <- paste0("Within spec = ", fmt_pct(within,2),
+                   " | Below LSL = ", fmt_pct(below,2),
+                   " | Above USL = ", fmt_pct(above,2))
+
+    list(mu=mu,sigma=sigma,lsl=lo,usl=hi,below=below,within=within,above=above,
+         z_lsl=z_lsl,z_usl=z_usl,stmt=stmt)
+  })
+
+  output$qc_within_card <- renderUI({ v <- qc_vals(); metric_card("Within spec", fmt_pct(v$within,2), "P(LSL<X<USL)") })
+  output$qc_below_card  <- renderUI({ v <- qc_vals(); metric_card("Below LSL", fmt_pct(v$below,2), "P(X<LSL)") })
+  output$qc_above_card  <- renderUI({ v <- qc_vals(); metric_card("Above USL", fmt_pct(v$above,2), "P(X>USL)") })
+  output$qc_zlims_card  <- renderUI({ v <- qc_vals(); metric_card("Z limits", paste0("zLSL=", round(v$z_lsl,2), ", zUSL=", round(v$z_usl,2)), "auto z") })
+
+  output$qc_statement <- renderUI({
+    v <- qc_vals()
+    div(class="teaching-box",
+        h5("Interpretation"),
+        p(v$stmt),
+        p("Business meaning: ‘within spec’ is the expected % of products meeting requirements.")
+    )
+  })
+
+  output$qc_plot <- renderPlot({
+    v <- qc_vals()
+    if (input$l6_view == "cdf") {
+      normal_cdf_plot(v$mu, v$sigma, "between", a=v$lsl, b=v$usl,
+                      title="CDF view: read F(LSL) and F(USL), then subtract")
+    } else {
+      normal_plot_with_shade(v$mu, v$sigma, "between", a=v$lsl, b=v$usl,
+                             title="Spec limits: shaded area is within spec")
+    }
+  })
+
+  output$qc_steps <- renderUI({
+    req(input$level=="L6", input$l6_topic=="qc")
+    if (!isTRUE(input$qc_show_steps)) return(NULL)
+    v <- qc_vals()
+    div(class="teaching-box",
+        h5("Step-by-step"),
+        tags$ol(
+          tags$li(paste0("Compute zLSL = (LSL − μ)/σ = ", round(v$z_lsl,4),
+                         " and zUSL = (USL − μ)/σ = ", round(v$z_usl,4))),
+          tags$li(paste0("Compute F(LSL)=pnorm(LSL, μ, σ) = ", round(v$below,6))),
+          tags$li(paste0("Compute F(USL)=pnorm(USL, μ, σ) = ", round(1 - v$above,6))),
+          tags$li(paste0("Within spec = F(USL) − F(LSL) = ", round(v$within,6))),
+          tags$li("Interpret as % meeting specification.")
+        )
+    )
+  })
+
+  # Compare two normals
+  comp_vals <- reactive({
+    req(input$level=="L6", input$l6_topic=="comp")
+    mu1 <- as.numeric(input$c1_mu); s1 <- max(1e-9, as.numeric(input$c1_sigma))
+    mu2 <- as.numeric(input$c2_mu); s2 <- max(1e-9, as.numeric(input$c2_sigma))
+    x <- as.numeric(input$comp_x)
+    p1 <- pnorm(x, mu1, s1)
+    p2 <- pnorm(x, mu2, s2)
+    list(mu1=mu1,s1=s1,mu2=mu2,s2=s2,x=x,p1=p1,p2=p2)
+  })
+
+  output$comp1_card <- renderUI({ v <- comp_vals(); metric_card("Curve 1", paste0("μ1=",round(v$mu1,1),", σ1=",round(v$s1,1)), "parameters") })
+  output$comp2_card <- renderUI({ v <- comp_vals(); metric_card("Curve 2", paste0("μ2=",round(v$mu2,1),", σ2=",round(v$s2,1)), "parameters") })
+  output$comp_px1_card <- renderUI({ v <- comp_vals(); metric_card("P1(X<x)", fmt_pct(v$p1,2), paste0("x=", v$x)) })
+  output$comp_px2_card <- renderUI({ v <- comp_vals(); metric_card("P2(X<x)", fmt_pct(v$p2,2), paste0("x=", v$x)) })
+
+  output$comp_plot <- renderPlot({
+    v <- comp_vals()
+    compare_normals_plot(v$mu1, v$s1, v$mu2, v$s2)
+  })
+
+  # Level 6 Quiz (depends on selected tool)
+  l6_quiz <- reactive({
+    req(input$level=="L6")
+    switch(
+      input$l6_topic,
+      calc = list(
+        q = "If you want P(X > x), which is correct?",
+        choices = c("pnorm(x, μ, σ)"="a", "1 - pnorm(x, μ, σ)"="b", "dnorm(x, μ, σ)"="c"),
+        correct = "b",
+        explain = "Right tail: P(X>x)=1−pnorm(x,μ,σ)."
+      ),
+      inv = list(
+        q = "Percentile finder uses which function in R?",
+        choices = c("pnorm"="a", "qnorm"="b", "dnorm"="c"),
+        correct = "b",
+        explain = "Inverse CDF is qnorm(p, μ, σ)."
+      ),
+      emp = list(
+        q = "Empirical rule: about what % is within μ ± 2σ?",
+        choices = c("68%"="a", "95%"="b", "99.7%"="c"),
+        correct = "b",
+        explain = "Rule of thumb: ≈95% within μ±2σ."
+      ),
+      qc = list(
+        q = "Within spec probability is computed as:",
+        choices = c("P(X<LSL)+P(X>USL)"="a", "F(USL)−F(LSL)"="b", "dnorm(USL)−dnorm(LSL)"="c"),
+        correct = "b",
+        explain = "Within spec: P(LSL<X<USL)=F(USL)−F(LSL)."
+      ),
+      comp = list(
+        q = "Changing σ (standard deviation) mainly changes:",
+        choices = c("The center location"="a", "The spread (width) of the curve"="b", "The sample size"="c"),
+        correct = "b",
+        explain = "σ controls spread; μ controls center."
+      )
+    )
+  })
+
+  output$l6_quiz_ui <- renderUI({
+    q <- l6_quiz()
+    radioButtons("l6_answer", q$q, choices=q$choices, selected=character(0))
+  })
+
+  observeEvent(input$check_l6, {
+    output$l6_feedback <- renderUI({
+      q <- l6_quiz()
+      if (is.null(input$l6_answer) || input$l6_answer=="") return(div(class="quiz-incorrect","Please select an answer."))
+      if (input$l6_answer==q$correct) div(class="quiz-correct", paste0("Correct ✅  ", q$explain))
+      else div(class="quiz-incorrect", paste0("Not correct ❌  ", q$explain))
+    })
+  })
+}
+
+shinyApp(ui, server)
